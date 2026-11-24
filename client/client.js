@@ -31,6 +31,7 @@ window.__ModuleLoader__.load({
 				noTarget: "无法识别目标工作区（侧边栏结构变化？）",
 				staleList: "工作区列表与侧边栏不一致，请重试",
 				restartHint: "缓存失效失败：归属可能需要重启 Harness 后才刷新",
+				archivedHidden: "注意：这条会话仍处于归档状态，移动后不会出现在侧边栏；请到「已归档」列表里恢复它。",
 				rescueSection: "会话修复",
 				rescueTitle: "会话修复",
 				rescueShort: "扫描全部会话档案，找回在侧边栏里「消失」或没有分组的会话。",
@@ -238,6 +239,7 @@ window.__ModuleLoader__.load({
 				noTarget: "Cannot resolve target workspace (sidebar layout changed?)",
 				staleList: "Workspace list out of sync with the sidebar; try again",
 				restartHint: "Cache invalidation failed: grouping may need a harness restart",
+				archivedHidden: "Note: this session is archived, so it stays hidden from the sidebar after the move; restore it from the Archived list.",
 				rescueSection: "Session Repair",
 				rescueTitle: "Session Repair",
 				rescueShort: "Scan all session archives and recover conversations that vanished from the sidebar or lack a group.",
@@ -1089,6 +1091,7 @@ window.__ModuleLoader__.load({
 					}
 					const wsTitle = workspaces.find((w) => w.workspaceId === target)?.title ?? "";
 					setNote(res.value?.attached ? t("selfHealed") : t("relinked", { title: wsTitle }));
+					if (res.value?.archived) setTimeout(() => toast(t("archivedHidden"), true), 600);
 					refreshWorkspaces();
 					scheduleRecencyFix(ctx, target, [item.sessionId]);
 					await runScan();
@@ -2575,6 +2578,9 @@ window.__ModuleLoader__.load({
 							await reconcileWorkspaceProjection(ctx, workspace.workspaceId, movedIds.length > 0 ? movedIds : [sessionId]);
 							toast(res.value?.queued ? t("queuedMove") : (res.value?.attached ? t("selfHealed") : t("done", { title: workspace.title })));
 							scheduleRecencyFix(ctx, workspace.workspaceId, movedIds.length > 0 ? movedIds : [sessionId]);
+							if (res.value?.archived || (res.value?.results ?? []).some((item) => item?.archived)) {
+								setTimeout(() => toast(t("archivedHidden"), true), 1200);
+							}
 							if (res.value?.restartHint) setTimeout(() => toast(t("restartHint"), true), 1200);
 						} else {
 							const msg = res?.error?.message ?? "unknown";
