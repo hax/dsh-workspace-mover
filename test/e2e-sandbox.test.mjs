@@ -176,19 +176,26 @@ function makeEntity(id, path, hostRef) {
       });
     },
     async attachSession(sid) {
-      if (this.failAttach) throw new Error('simulated attach failure');
-      // 官方语义：已记账时 attach 是 no-op，mutate 不发 domain/changed。
+      // 官方语义：已记账时 attach 是 no-op（不读头部、不发 domain/changed）。
       if (record.sessionIds.includes(sid)) return;
+      // Host order (WorkspaceEntity.attachSession → registry.readSessionHeader):
+      // the header is read once and cached in the registry index *before* the
+      // target is validated, and later reads are served from that cache — they do
+      // not re-read the artifact. Model both, otherwise a rollback regression
+      // stays invisible: a failed attach would not poison the index.
+      const header = sharedIndex.headers.get(String(sid)) ?? (() => {
+        const artifact = findArtifact(sid);
+        return readHeader(readFileSync(artifact), artifact.endsWith('.zstd') ? 'zstd' : 'none');
+      })();
+      sharedIndex.headers.set(String(sid), header);
+      if (this.failAttach) throw new Error('simulated attach failure');
       // 官方语义：未记账 id 需通过「头部 cwd 规范化后 === path」校验，
       // 并经 rememberSessionPath 回填三张索引后才挂账
-      const artifact = findArtifact(sid);
-      const header = readHeader(readFileSync(artifact), artifact.endsWith('.zstd') ? 'zstd' : 'none');
       let canonical;
       try { canonical = realpathSync(header.cwd); } catch {
         throw new Error(`cwd does not resolve: '${header.cwd}'`);
       }
       if (canonical.toLowerCase() !== record.path.toLowerCase()) throw new Error(`cwd resolves elsewhere: '${header.cwd}'`);
-      sharedIndex.headers.set(String(sid), header);
       sharedIndex.sessionPaths.set(String(sid), canonical);
       sharedIndex.invalidSessionPaths.delete(String(sid));
       this.attached.push(sid);
@@ -822,6 +829,13 @@ test('attach 失败 → 自动回滚到源目录并重新挂账', async () => {
   assert.deepEqual(readFileSync(artifactPath(root, A, 'session-aaa')), originalBytes, 'bytes identical after rollback');
   assert.deepEqual(entityB.attached, []);
   assert.ok(entityA.attached.includes('session-aaa'), 're-attached to source');
+  // The bookkeeping is the half of a move that a byte-level rollback does not fix:
+  // a failed attach caches the target header first, so re-attaching the source must
+  // invalidate that cache or the session ends up owned by neither workspace.
+  assert.ok(entityA.record.sessionIds.includes('session-aaa'), 'source keeps the session accounted');
+  assert.ok(!entityB.record.sessionIds.includes('session-aaa'), 'target keeps no membership');
+  assert.equal(sharedIndex.headers.get('session-aaa')?.cwd, A, 'index describes the restored source header');
+  assert.equal(sharedIndex.sessionPaths.get('session-aaa'), realpathSync(A), 'index points back at the source path');
 });
 
 test('session becoming resident during flush is blocked before backup or detach', async () => {
