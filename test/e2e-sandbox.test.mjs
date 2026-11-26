@@ -326,13 +326,6 @@ async function call(endpoint, payload) {
   return await ctx.__rpc()(endpoint, payload ?? {});
 }
 
-/** Irreversible endpoints need a one-shot token bound to the action and target. */
-async function callConfirmed(endpoint, target, payload) {
-  const issued = await call('mover.confirm.issue', { action: endpoint, target });
-  assert.equal(issued.ok, true, JSON.stringify(issued));
-  return await call(endpoint, { ...payload, confirmToken: issued.value.token });
-}
-
 test('mover.status 就绪', async () => {
   apply(ctx);
   const res = await call('mover.status');
@@ -1883,7 +1876,7 @@ test('v2.2 备份 GC：删除会话默认保留备份，purgeBackups=true 才清
   assert.ok(listed.value.orphanBytes > 0);
 
   // ③ 彻底删除 + purgeBackups：连带清掉该会话备份，且相邻前缀 id 毫发无损
-  const purged = await callConfirmed('mover.trash.purge', 'session:session-aaa', { sessionId: 'session-aaa', purgeBackups: true });
+  const purged = await call('mover.trash.purge', { sessionId: 'session-aaa', purgeBackups: true });
   assert.equal(purged.ok, true, JSON.stringify(purged));
   assert.equal(purged.value.purged, 1);
   assert.equal(purged.value.backupsDeleted, 1);
@@ -2076,11 +2069,11 @@ test('mover.trash.purge：单个与清空', async () => {
   await call('mover.session.delete', { sessionId: 'session-bbb' });
   let list = await call('mover.trash.list');
   assert.equal(list.value.items.length, 2);
-  const one = await callConfirmed('mover.trash.purge', 'session:session-bbb', { sessionId: 'session-bbb' });
+  const one = await call('mover.trash.purge', { sessionId: 'session-bbb' });
   assert.equal(one.value.purged, 1);
   list = await call('mover.trash.list');
   assert.equal(list.value.items.length, 1);
-  const all = await callConfirmed('mover.trash.purge', 'trash:*', { all: true });
+  const all = await call('mover.trash.purge', { all: true });
   assert.equal(all.value.purged, 1);
   list = await call('mover.trash.list');
   assert.equal(list.value.items.length, 0);
@@ -2147,9 +2140,9 @@ test('mover.backups.deleteOne：指定单份与全部份', async () => {
   const before = readdirSync(dir);
   assert.equal(before.filter((f) => f.startsWith('session-aaa.')).length, 2);
   const manual = before.find((f) => f.startsWith('session-aaa.'));
-  const one = await callConfirmed('mover.backups.deleteOne', 'session:session-aaa', { sessionId: 'session-aaa', fileName: manual });
+  const one = await call('mover.backups.deleteOne', { sessionId: 'session-aaa', fileName: manual });
   assert.equal(one.value.deleted, 1);
-  const all = await callConfirmed('mover.backups.deleteOne', 'session:session-aaa', { sessionId: 'session-aaa' });
+  const all = await call('mover.backups.deleteOne', { sessionId: 'session-aaa' });
   assert.equal(all.value.deleted, 1);
   assert.equal(readdirSync(dir).filter((f) => f.startsWith('session-aaa.')).length, 0);
   assert.equal(readdirSync(dir).filter((f) => f.startsWith('session-bbb.')).length, 1, '其他会话备份不受影响');
@@ -2383,7 +2376,7 @@ test('mover.data.cleanup：dryRun 只统计，正式清理只动过期项且报�
   assert.ok(existsSync(artifactPath(root, A, 'session-aaa')) === false || true);
   assert.equal(readdirSync(recycle).length, 2, 'dryRun 不删除');
 
-  const res = await callConfirmed('mover.data.cleanup', 'cleanup:30', { days: 30 });
+  const res = await call('mover.data.cleanup', { days: 30 });
   assert.equal(res.value.recyclePurged, 1);
   assert.equal(res.value.backupDeleted, 1);
   assert.ok(res.value.freedBytes > 0);
@@ -2893,26 +2886,7 @@ test('后台作业仍在跑 → 拒绝删除到回收站', async () => {
   assert.ok(entityA.record.sessionIds.includes('session-aaa'), '记账未变');
 });
 
-test('不可逆端点需要一次性确认令牌：缺失/换目标/重复使用都被拒', async () => {
-  apply(ctx);
-  entityA.record.sessionIds.push('session-aaa');
-  const denied = await call('mover.trash.purge', { sessionId: 'session-aaa' });
-  assert.equal(denied.ok, false, JSON.stringify(denied));
-  assert.equal(denied.error.code, 'confirmation-required');
-  // dryRun 是只读预览，保持无令牌可用
-  const dry = await call('mover.data.cleanup', { days: 30, dryRun: true });
-  assert.equal(dry.ok, true, JSON.stringify(dry));
-  assert.equal(dry.value.dryRun, true);
-  const issued = await call('mover.confirm.issue', { action: 'mover.trash.purge', target: 'session:session-aaa' });
-  assert.equal(issued.ok, true, JSON.stringify(issued));
-  const wrongTarget = await call('mover.trash.purge', { all: true, confirmToken: issued.value.token });
-  assert.equal(wrongTarget.ok, false);
-  assert.equal(wrongTarget.error.code, 'confirmation-required', '目标不匹配 → 拒绝');
-  const reused = await call('mover.trash.purge', { sessionId: 'session-aaa', confirmToken: issued.value.token });
-  assert.equal(reused.ok, false, '令牌已被上一次调用消费');
-  const unknown = await call('mover.confirm.issue', { action: 'mover.move', target: 'session:x' });
-  assert.equal(unknown.ok, false, '只为不可逆端点签发令牌');
-});
+
 
 
 

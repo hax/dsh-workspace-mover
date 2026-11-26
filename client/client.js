@@ -1033,13 +1033,6 @@ window.__ModuleLoader__.load({
 				return res.value;
 			};
 
-			// 不可逆操作需要一次性令牌：绑定动作与目标，服务端单次消费。
-			// 这是「刻意确认」闸门，不是来源边界——跨站已被宿主的 Host/Origin 栅栏挡住。
-			const withConfirmation = async (action, target, payload) => {
-				const { token } = await call('mover.confirm.issue', { action, target });
-				return { ...payload, confirmToken: token };
-			};
-
 			// 面板改动落账后主动重拉工作区基线（公开 API）：实时变更帧链路偶发不落地，
 			// 不重拉的话侧边栏可能把会话先归到「未分组」，要刷新网页才归位。
 			const refreshWorkspaces = () => { try { ctx?.get?.("workspaces")?.refresh?.(); } catch { /* ignore */ } };
@@ -1395,7 +1388,7 @@ window.__ModuleLoader__.load({
 				setBusy(true);
 				setNote("");
 				try {
-					const res = await call("mover.trash.purge", await withConfirmation('mover.trash.purge', `session:${item.sessionId}`, { sessionId: item.sessionId, purgeBackups }));
+					const res = await call("mover.trash.purge", { sessionId: item.sessionId, purgeBackups });
 					let msg = t("purgedMsg", { n: res?.purged ?? 1 });
 					if ((res?.backupsDeleted ?? 0) > 0) msg += t("purgeBackupsDone", { n: res.backupsDeleted });
 					setNote(msg);
@@ -1412,7 +1405,7 @@ window.__ModuleLoader__.load({
 				setBusy(true);
 				setNote("");
 				try {
-					const res = await call("mover.trash.purge", await withConfirmation('mover.trash.purge', 'trash:*', { all: true }));
+					const res = await call("mover.trash.purge", { all: true });
 					setNote(t("purgedMsg", { n: res?.purged ?? list.length }));
 					await runScan();
 				} catch (err) {
@@ -1466,7 +1459,7 @@ window.__ModuleLoader__.load({
 				setBusy(true);
 				setNote("");
 				try {
-					const res = await call("mover.backups.deleteOne", await withConfirmation('mover.backups.deleteOne', `session:${item.sessionId}`, { sessionId: item.sessionId }));
+					const res = await call("mover.backups.deleteOne", { sessionId: item.sessionId });
 					setNote(t("backupDeletedMsg", { n: res?.deleted ?? 0 }));
 					await runScan();
 				} catch (err) {
@@ -1490,7 +1483,7 @@ window.__ModuleLoader__.load({
 				let failed = 0;
 				for (const item of orphans) {
 					try {
-						const res = await call("mover.backups.deleteOne", await withConfirmation('mover.backups.deleteOne', `session:${item.sessionId}`, { sessionId: item.sessionId }));
+						const res = await call("mover.backups.deleteOne", { sessionId: item.sessionId });
 						deleted += res?.deleted ?? 0;
 					} catch { failed++; }
 				}
@@ -1618,7 +1611,7 @@ window.__ModuleLoader__.load({
 					const size = fmtBytes(preview.freedBytes);
 					if (!window.confirm(t("dataCleanupConfirm", { r: preview.recyclePurged, b: preview.backupDeleted, size }))) return;
 					setBusy(true);
-					const res = await call("mover.data.cleanup", await withConfirmation('mover.data.cleanup', 'cleanup:30', { days: 30 }));
+					const res = await call("mover.data.cleanup", { days: 30 });
 					setNote(t("dataCleanedMsg", { r: res.recyclePurged, b: res.backupDeleted, size: fmtBytes(res.freedBytes) }));
 					await runScan();
 				} catch (err) {
