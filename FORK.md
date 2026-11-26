@@ -15,7 +15,7 @@ gaps plus one usability trap. Each fix below has a regression test that fails wi
 | Commit | Change | Test that pins it |
 | --- | --- | --- |
 | `test:` | Restore `test:installed-host` on 0.2.2: minified client bundle anchor, `provider`/`model` selection, `tools.resolve`, and 0.2.2 fork-lineage shape | `npm run test:installed-host` (18/18) |
-| `fix:` P3 | An attach-time rollback no longer loses workspace membership: drop the registry's poisoned header/path cache before re-attaching, detach strays, and report instead of claiming a clean rollback | `attach 失败 → 自动回滚到源目录并重新挂账` |
+| `fix:` P3 | An attach-time rollback no longer loses workspace membership: drop the poisoned registry indexes, drop a raw-only id and re-attach so the host rebuilds its path index, judge success by the public `sessionIds` view, verify stray detaches, and fail with `rollback-incomplete` instead of claiming a clean rollback | `attach 失败 → 自动回滚到源目录并重新挂账`、`源工作区 detach 曾失败…`、`源 detach 持续失败…` |
 | `fix:` P10 | Refuse moves while `workspace/session-activity` reports background jobs or delegated subagents; `turn` keeps the existing stop-and-move path, and `schedule` is allowed with a warning (it addresses the session by id, so the timer follows the move — refusing would strand scheduled sessions with no way to pause them) | `后台作业仍在跑 → 拒绝迁移，且零副作用`、`定时任务不算「占用中」…` |
 | `fix:` P7 | Irreversible endpoints (`trash.purge`, `backups.deleteOne`, non-dryRun `data.cleanup`) need a one-shot token bound to action + target; the ignored `{ authority: 'loopback' }` argument is gone | `不可逆端点需要一次性确认令牌…` |
 | `fix:` P6 | A move of an archived session reports `archived` / `archived-hidden` and the client says it stays hidden until restored | `归档会话移动后仍然是归档态…` |

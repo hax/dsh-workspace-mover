@@ -202,7 +202,14 @@ function makeEntity(id, path, hostRef) {
       record.sessionIds.unshift(sid);
       hostRef.onWorkspaceChanged?.(id, record);
     },
+    failDetach: false,
+    failDetachOnce: false,
     async detachSession(sid) {
+      // 迁移入口的 detach 失败只会被记日志；这里用来构造"raw 仍有记账、索引已丢"的脏状态。
+      if (this.failDetach || this.failDetachOnce) {
+        this.failDetachOnce = false;
+        throw new Error('simulated detach failure');
+      }
       if (!record.sessionIds.includes(sid)) return;
       this.detached.push(sid);
       record.sessionIds = record.sessionIds.filter((x) => x !== sid);
@@ -2916,4 +2923,56 @@ test('归档会话移动后仍然是归档态，结果里明确报告', async ()
   assert.equal(moved.value.archived, true, '结果必须报告归档态');
   assert.ok(moved.value.warnings.includes('archived-hidden'), '给出「移动后仍隐藏」的警告');
   assert.deepEqual(ctx.workspaceRegistry.archivedSessionIds, ['session-aaa'], '移动不改归档集');
+});
+
+test('源工作区 detach 曾失败（raw 仍有记账）时，回滚必须真正恢复可见归属', async () => {
+  apply(ctx);
+  entityA.record.sessionIds.push('session-aaa');
+  // 迁移开始时的 detach 失败一次 → 源工作区 raw 里仍留着 id；
+  // 目标 attach 失败触发回滚，此时索引里没有该会话的路径。
+  entityA.failDetachOnce = true;
+  entityB.failAttach = true;
+  // 初始状态：宿主索引里已有该会话的路径，所以它是"可见的"；测试要证明的是
+  // 回滚能把这层可见性恢复回来，而不只是 raw 记账还在。
+  sharedIndex.sessionPaths.set('session-aaa', A);
+  assert.ok(entityA.sessionIds.includes('session-aaa'), '前提：初始可公开看到');
+  const res = await call('mover.move', { sessionId: 'session-aaa', targetWorkspaceId: 'wid-b' });
+  assert.equal(res.ok, false, JSON.stringify(res));
+  assert.match(res.error.message, /rolled back cleanly/i);
+  // "cleanly" 必须名副其实：公开成员视图（侧栏用的就是它）里能看到这条会话。
+  assert.ok(entityA.sessionIds.includes('session-aaa'), '公开成员视图必须包含该会话');
+  assert.deepEqual(entityA.record.sessionIds, ['session-aaa'], 'raw 记账也只有源工作区');
+});
+
+test('源 detach 持续失败 + 目标 attach 失败 → 不得谎报 cleanly', async () => {
+  apply(ctx);
+  entityA.record.sessionIds.push('session-aaa');
+  entityA.failDetach = true;
+  entityB.failAttach = true;
+  const res = await call('mover.move', { sessionId: 'session-aaa', targetWorkspaceId: 'wid-b' });
+  assert.equal(res.ok, false, JSON.stringify(res));
+  assert.equal(res.error.code, 'rollback-incomplete', '必须是专用错误码，不能是 rollback-failed/cleanly');
+  assert.doesNotMatch(res.error.message, /rolled back cleanly/i);
+  assert.equal(existsSync(artifactPath(root, A, 'session-aaa')), true, '档案仍在源目录');
+  const recovery = JSON.parse(readFileSync(join(root, 'workspace-mover', 'recovery.json'), 'utf8'));
+  const record = recovery.records.find((r) => r.phase === 'attach-rollback');
+  assert.ok(record, '必须留下恢复记录');
+  assert.equal(record.sessionId, 'session-aaa', '记录要指向具体会话');
+  assert.match(record.lastError, /membership/i, '记录要说明失败原因');
+});
+
+test('批量里单条回滚不完整时，逐条结果带专用错误码（客户端才能给准提示）', async () => {
+  apply(ctx);
+  entityA.record.sessionIds.push('session-aaa');
+  entityA.failDetach = true;
+  entityB.failAttach = true;
+  const res = await call('mover.moveMany', {
+    sessions: [{ sessionId: 'session-aaa' }],
+    targetWorkspaceId: 'wid-b'
+  });
+  assert.equal(res.ok, true, JSON.stringify(res));
+  assert.equal(res.value.failedCount, 1);
+  const item = res.value.results.find((r) => r.sessionId === 'session-aaa');
+  assert.equal(item.ok, false);
+  assert.equal(item.code, 'rollback-incomplete', '逐条结果必须保留 code');
 });
