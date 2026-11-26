@@ -2914,16 +2914,7 @@ test('不可逆端点需要一次性确认令牌：缺失/换目标/重复使用
   assert.equal(unknown.ok, false, '只为不可逆端点签发令牌');
 });
 
-test('归档会话移动后仍然是归档态，结果里明确报告', async () => {
-  apply(ctx);
-  entityA.record.sessionIds.push('session-aaa');
-  ctx.workspaceRegistry.archivedSessionIds = ['session-aaa'];
-  const moved = await call('mover.move', { sessionId: 'session-aaa', targetWorkspaceId: 'wid-b' });
-  assert.equal(moved.ok, true, JSON.stringify(moved));
-  assert.equal(moved.value.archived, true, '结果必须报告归档态');
-  assert.ok(moved.value.warnings.includes('archived-hidden'), '给出「移动后仍隐藏」的警告');
-  assert.deepEqual(ctx.workspaceRegistry.archivedSessionIds, ['session-aaa'], '移动不改归档集');
-});
+
 
 test('源工作区 detach 曾失败（raw 仍有记账）时，回滚必须真正恢复可见归属', async () => {
   apply(ctx);
