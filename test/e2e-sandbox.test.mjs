@@ -2976,3 +2976,38 @@ test('批量里单条回滚不完整时，逐条结果带专用错误码（客�
   assert.equal(item.ok, false);
   assert.equal(item.code, 'rollback-incomplete', '逐条结果必须保留 code');
 });
+
+test('删除时活跃定时任务算「占用」：不会留下指向已删会话的定时器', async () => {
+  apply(ctx);
+  entityA.record.sessionIds.push('session-aaa');
+  ctx.waterfall = async () => [{ kind: 'schedule', items: [{ id: 'schedule-1', label: '每日巡检' }] }];
+  const res = await call('mover.session.delete', { sessionId: 'session-aaa' });
+  assert.equal(res.ok, false, JSON.stringify(res));
+  assert.equal(res.error.code, 'stop-required');
+  assert.match(res.error.message, /schedule/);
+  assert.match(res.error.message, /deleting/);
+  assert.ok(existsSync(artifactPath(root, A, 'session-aaa')), '档案未被移走');
+  assert.ok(entityA.record.sessionIds.includes('session-aaa'), '记账未变');
+});
+
+test('搬家向导（repoint）在后台作业仍在跑时拒绝', async () => {
+  apply(ctx);
+  const moved = setupMovedFolder();
+  ctx.waterfall = async () => [{ kind: 'job', items: [{ id: 'job-1', label: 'build' }] }];
+  const res = await call('mover.repoint', { workspaceId: 'wid-a', newPath: moved });
+  assert.equal(res.ok, false, JSON.stringify(res));
+  assert.equal(res.error.code, 'stop-required');
+  assert.match(res.error.message, /repointing/);
+  assert.ok(existsSync(artifactPath(root, A, 'session-aaa')), '档案没有被搬走');
+});
+
+test('活动查询失败时按「无法确认」拒绝，而不是当作空闲', async () => {
+  apply(ctx);
+  entityA.record.sessionIds.push('session-aaa');
+  ctx.waterfall = async () => { throw new Error('schedule domain unavailable'); };
+  const res = await call('mover.move', { sessionId: 'session-aaa', targetWorkspaceId: 'wid-b' });
+  assert.equal(res.ok, false, JSON.stringify(res));
+  assert.equal(res.error.code, 'stop-required');
+  assert.equal(res.error.details?.reason, 'activity-unknown');
+  assert.ok(existsSync(artifactPath(root, A, 'session-aaa')), '档案未动');
+});
